@@ -4,7 +4,7 @@ import { loggingSystem } from "../helpers/loggingSystem.js";
 const { GRUSHER_IP } = process.env;
 const MAC_ADDRESS_REGEX = /\b[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}\b/g;
 
-export const getOnuCliInfoFromGrusher = async (onuPath) => {
+export const getOnuCliMacCount = async (onuPath) => {
   const URL = `http://${GRUSHER_IP}/api?cat=device&action=custom_cli&device_id=1&command_id=2&variables[%EMPTY%]=${encodeURIComponent(
     onuPath,
   )}`;

@@ -1,13 +1,13 @@
 import "dotenv/config";
 import cron from "node-cron";
 import { bot } from "./bot.js";
-import { getOnuCliInfoFromGrusher } from "./api/getOnuCliInfoFromGrusher.js";
+import { getOnuCliMacCount } from "./api/getOnuCliMacCount.js";
 import { loggingSystem } from "./helpers/loggingSystem.js";
 
 cron.schedule("*/1 * * * *", async () => {
   const GRUSHER_ONU_PATH = "0/4/5 ont 6";
   try {
-    const data = await getOnuCliInfoFromGrusher(GRUSHER_ONU_PATH);
+    const data = await getOnuCliMacCount(GRUSHER_ONU_PATH);
     console.log(`${GRUSHER_ONU_PATH}: ${JSON.stringify(data)}`);
   } catch (error) {
     await loggingSystem(
