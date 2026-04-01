@@ -1,6 +1,22 @@
 import "dotenv/config";
+import cron from "node-cron";
 import { bot } from "./bot.js";
+import { getOnuCliInfoFromGrusher } from "./api/getOnuCliInfoFromGrusher.js";
+import { loggingSystem } from "./helpers/loggingSystem.js";
 
-bot.start();
+cron.schedule("*/1 * * * *", async () => {
+  const GRUSHER_ONU_PATH = "0/4/5 ont 6";
+  try {
+    const data = await getOnuCliInfoFromGrusher(GRUSHER_ONU_PATH);
+    console.log(`${GRUSHER_ONU_PATH}: ${JSON.stringify(data)}`);
+  } catch (error) {
+    await loggingSystem(
+      "log/error.log",
+      `Grusher cron job failed for ${GRUSHER_ONU_PATH}: ${error.message}`,
+    );
+  }
+});
+
+// bot.start();
 
 console.log("Bot started");
