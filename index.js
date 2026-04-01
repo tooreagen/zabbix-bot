@@ -2,7 +2,25 @@ import "dotenv/config";
 import cron from "node-cron";
 import { bot } from "./bot.js";
 import { getOnuCliMacCount } from "./api/getOnuCliMacCount.js";
+import { getOnuPathFromGrusher } from "./api/getOnuPathFromGrusher.js";
+import { onuSerials } from "./data/onuSerials.js";
 import { loggingSystem } from "./helpers/loggingSystem.js";
+
+const logOnuPaths = async () => {
+  for (const serial of onuSerials) {
+    try {
+      const onuPath = await getOnuPathFromGrusher(serial);
+      console.log(`${serial}: ${onuPath}`);
+    } catch (error) {
+      await loggingSystem(
+        "log/error.log",
+        `Failed to get ONU path for ${serial}: ${error.message}`,
+      );
+    }
+  }
+};
+
+await logOnuPaths();
 
 cron.schedule("*/1 * * * *", async () => {
   const GRUSHER_ONU_PATH = "0/4/5 ont 6";
