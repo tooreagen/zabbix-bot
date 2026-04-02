@@ -8,6 +8,58 @@ import { loadOnuZeroState, saveOnuZeroState } from "./onuZeroState.js";
 const { TELEGRAM_REPORT_CHAT_ID } = process.env;
 
 const ZERO_STREAK_ALERT_THRESHOLD = 4;
+const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
+
+const splitMessageIntoChunks = (message) => {
+  if (message.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
+    return [message];
+  }
+
+  const chunks = [];
+  const lines = message.split("\n");
+  let currentChunk = "";
+
+  for (const line of lines) {
+    const candidate = currentChunk ? `${currentChunk}\n${line}` : line;
+
+    if (candidate.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
+      currentChunk = candidate;
+      continue;
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+
+    if (line.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
+      currentChunk = line;
+      continue;
+    }
+
+    let remainingLine = line;
+
+    while (remainingLine.length > TELEGRAM_MAX_MESSAGE_LENGTH) {
+      chunks.push(remainingLine.slice(0, TELEGRAM_MAX_MESSAGE_LENGTH));
+      remainingLine = remainingLine.slice(TELEGRAM_MAX_MESSAGE_LENGTH);
+    }
+
+    currentChunk = remainingLine;
+  }
+
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+};
+
+const sendChunkedTelegramMessage = async (chatId, message) => {
+  const chunks = splitMessageIntoChunks(message);
+
+  for (const chunk of chunks) {
+    await bot.api.sendMessage(chatId, chunk);
+  }
+};
 
 const onuMacCountReport = async () => {
   const startedAt = Date.now();
@@ -118,10 +170,10 @@ export const sendWeeklyMacReport = async () => {
   }
 
   try {
-    await bot.api.sendMessage(TELEGRAM_REPORT_CHAT_ID, reportMessage);
+    await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, reportMessage);
 
     if (alertMessage) {
-      await bot.api.sendMessage(TELEGRAM_REPORT_CHAT_ID, alertMessage);
+      await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, alertMessage);
     }
   } catch (error) {
     await loggingSystem("log/error.log", `Failed to send Telegram report: ${error.message}`);
