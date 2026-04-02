@@ -9,6 +9,9 @@ const { TELEGRAM_REPORT_CHAT_ID } = process.env;
 
 const ZERO_STREAK_ALERT_THRESHOLD = 4;
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
+const ITERATION_DELAY_MS = 500;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const splitMessageIntoChunks = (message) => {
   if (message.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
@@ -84,7 +87,7 @@ const onuMacCountReport = async () => {
     );
   };
 
-  for (const { serial, address } of onuList) {
+  for (const [index, { serial, address }] of onuList.entries()) {
     const safeAddress = address ?? "Без адреси";
 
     try {
@@ -96,32 +99,31 @@ const onuMacCountReport = async () => {
         await loggingSystem("log/grusher-report.log", `Path not found for serial ${serial}`);
         reportLines.push(`${serial} [${safeAddress}] [path not found]`);
         logRemainingTime();
-        continue;
+      } else {
+        const macCount = await getOnuCliMacCount(onuPath);
+
+        if (typeof macCount === "number") {
+          totalMacCount += macCount;
+        }
+
+        const previousState = zeroState[serial] ?? {};
+        const nextZeroStreak = macCount === 0 ? (previousState.zeroStreak ?? 0) + 1 : 0;
+        const nowIso = new Date().toISOString();
+
+        zeroState[serial] = {
+          address: safeAddress,
+          lastCheckedAt: nowIso,
+          lastMacCount: macCount,
+          zeroStreak: nextZeroStreak,
+        };
+
+        if (nextZeroStreak >= ZERO_STREAK_ALERT_THRESHOLD) {
+          alertLines.push(`${serial} [${safeAddress}] [0] [${nextZeroStreak} weeks]`);
+        }
+
+        reportLines.push(`${serial} [${safeAddress}] [${macCount ?? "unknown"}]`);
+        logRemainingTime();
       }
-
-      const macCount = await getOnuCliMacCount(onuPath);
-
-      if (typeof macCount === "number") {
-        totalMacCount += macCount;
-      }
-
-      const previousState = zeroState[serial] ?? {};
-      const nextZeroStreak = macCount === 0 ? (previousState.zeroStreak ?? 0) + 1 : 0;
-      const nowIso = new Date().toISOString();
-
-      zeroState[serial] = {
-        address: safeAddress,
-        lastCheckedAt: nowIso,
-        lastMacCount: macCount,
-        zeroStreak: nextZeroStreak,
-      };
-
-      if (nextZeroStreak >= ZERO_STREAK_ALERT_THRESHOLD) {
-        alertLines.push(`${serial} [${safeAddress}] [0] [${nextZeroStreak} weeks]`);
-      }
-
-      reportLines.push(`${serial} [${safeAddress}] [${macCount ?? "unknown"}]`);
-      logRemainingTime();
     } catch (error) {
       await loggingSystem(
         "log/error.log",
@@ -129,6 +131,10 @@ const onuMacCountReport = async () => {
       );
       reportLines.push(`${serial} [${safeAddress}] [error]`);
       logRemainingTime();
+    }
+
+    if (index < onuList.length - 1) {
+      await delay(ITERATION_DELAY_MS);
     }
   }
 
@@ -140,7 +146,9 @@ const onuMacCountReport = async () => {
   return {
     alertMessage:
       alertLines.length > 0
-        ? ["ПОПЕРЕДЖЕННЯ: ONT має 0 MAC за 4 або більше перевірок поспіль", ...alertLines].join("\n")
+        ? ["ПОПЕРЕДЖЕННЯ: ONT має 0 MAC за 4 або більше перевірок поспіль", ...alertLines].join(
+            "\n",
+          )
         : null,
     reportMessage: [
       "Кількість MAC на будинкових ONU:",
