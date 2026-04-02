@@ -1,13 +1,14 @@
 import { getOnuCliMacCount } from "../api/getOnuCliMacCount.js";
 import { getOnuPathFromGrusher } from "../api/getOnuPathFromGrusher.js";
+import { getOnuSerialsFromNotion } from "../api/getOnuSerialsFromNotion.js";
 import { loggingSystem } from "../helpers/loggingSystem.js";
-import { onuSerials } from "../data/onuSerials.js";
 import { bot } from "../bot.js";
 
 const { TELEGRAM_REPORT_CHAT_ID } = process.env;
 
 const onuMacCountReport = async () => {
   const startedAt = Date.now();
+  const onuList = await getOnuSerialsFromNotion();
   const reportLines = [];
   let totalMacCount = 0;
   let processedCount = 0;
@@ -18,16 +19,16 @@ const onuMacCountReport = async () => {
 
     const elapsedMs = Date.now() - startedAt;
     const averageIterationMs = elapsedMs / processedCount;
-    const remainingIterations = onuSerials.length - processedCount;
+    const remainingIterations = onuList.length - processedCount;
     const estimatedRemainingMs = averageIterationMs * remainingIterations;
     const estimatedRemainingSeconds = (estimatedRemainingMs / 1000).toFixed(2);
 
     console.log(
-      `Processed ${processedCount}/${onuSerials.length}. Estimated time remaining: ${estimatedRemainingSeconds}s`,
+      `Processed ${processedCount}/${onuList.length}. Estimated time remaining: ${estimatedRemainingSeconds}s`,
     );
   };
 
-  for (const serial of onuSerials) {
+  for (const { serial, address } of onuList) {
     try {
       await loggingSystem("log/grusher-report.log", `Start processing serial ${serial}`);
 
@@ -35,7 +36,7 @@ const onuMacCountReport = async () => {
 
       if (!onuPath) {
         await loggingSystem("log/grusher-report.log", `Path not found for serial ${serial}`);
-        reportLines.push(`${serial}: path not found`);
+        reportLines.push(`${serial} [${address ?? "Без адреси"}] [path not found]`);
         logRemainingTime();
         continue;
       }
@@ -45,14 +46,14 @@ const onuMacCountReport = async () => {
         totalMacCount += macCount;
       }
 
-      reportLines.push(`${serial}: ${macCount ?? "unknown"} MAC`);
+      reportLines.push(`${serial} [${address ?? "Без адреси"}] [${macCount ?? "unknown"}]`);
       logRemainingTime();
     } catch (error) {
       await loggingSystem(
         "log/error.log",
         `Failed to build MAC report for ${serial}: ${error.message}`,
       );
-      reportLines.push(`${serial}: error`);
+      reportLines.push(`${serial} [${address ?? "Без адреси"}] [error]`);
       logRemainingTime();
     }
   }

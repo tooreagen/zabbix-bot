@@ -5,7 +5,7 @@ const { GRUSHER_IP } = process.env;
 
 export const getOnuStateFromGrusher = async (serial) => {
   const URL = `http://${GRUSHER_IP}/api?cat=device&action=get_onu_info&param=${encodeURIComponent(
-    serial
+    serial,
   )}`;
 
   try {
@@ -19,12 +19,12 @@ export const getOnuStateFromGrusher = async (serial) => {
     if (!data || typeof data.result !== "object") {
       await loggingSystem(
         "log/error.log",
-        `Invalid Grusher response for serial ${serial}: ${JSON.stringify(data)}`
+        `Invalid Grusher response for serial ${serial}: ${JSON.stringify(data)}`,
       );
       return null;
     }
 
-    return data; 
+    return data;
   } catch (error) {
     let msg = "Unknown error";
 
