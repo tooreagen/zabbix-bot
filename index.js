@@ -2,14 +2,10 @@ import "dotenv/config";
 import cron from "node-cron";
 import { sendWeeklyMacReport } from "./utils/onuMacCountReport.js";
 
-// cron.schedule("0 6 * * 1", async () => {
-//   await sendWeeklyMacReport();
-// });
-
-cron.schedule("* * * * *", async () => {
+cron.schedule("15 12 * * 4", async () => {
   await sendWeeklyMacReport();
 });
 
-// bot.start();
+bot.start();
 
 console.log("Bot started");
