@@ -10,6 +10,8 @@ const { TELEGRAM_REPORT_CHAT_ID } = process.env;
 const ZERO_STREAK_ALERT_THRESHOLD = 4;
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const ITERATION_DELAY_MS = 500;
+const REPORT_LOG_FILE = "log/grusher-report.log";
+const PROGRESS_LOG_FILE = "log/progress.log";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -66,6 +68,7 @@ const sendChunkedTelegramMessage = async (chatId, message) => {
 
 const onuMacCountReport = async () => {
   const startedAt = Date.now();
+  const runStartedAtIso = new Date().toISOString();
   const onuList = await getOnuSerialsFromNotion();
   const zeroState = await loadOnuZeroState();
   const reportLines = [];
@@ -73,33 +76,40 @@ const onuMacCountReport = async () => {
   let totalMacCount = 0;
   let processedCount = 0;
 
-  const logRemainingTime = () => {
+  await loggingSystem(
+    REPORT_LOG_FILE,
+    `Weekly MAC report started. ONT count: ${onuList.length}. Started at: ${runStartedAtIso}`,
+  );
+
+  const logRemainingTime = async () => {
     processedCount += 1;
 
     const elapsedMs = Date.now() - startedAt;
     const averageIterationMs = elapsedMs / processedCount;
     const remainingIterations = onuList.length - processedCount;
     const estimatedRemainingMs = averageIterationMs * remainingIterations;
-    const estimatedRemainingSeconds = (estimatedRemainingMs / 1000).toFixed(2);
+    const estimatedRemainingMinutes = (estimatedRemainingMs / 60000).toFixed(2);
+    const progressMessage = `Processed ${processedCount}/${onuList.length}. Estimated time remaining: ${estimatedRemainingMinutes} min`;
 
-    console.log(
-      `Processed ${processedCount}/${onuList.length}. Estimated time remaining: ${estimatedRemainingSeconds}s`,
-    );
+    await loggingSystem(PROGRESS_LOG_FILE, progressMessage);
+    await loggingSystem(REPORT_LOG_FILE, progressMessage);
   };
 
   for (const [index, { serial, address }] of onuList.entries()) {
     const safeAddress = address ?? "Без адреси";
 
     try {
-      await loggingSystem("log/grusher-report.log", `Start processing serial ${serial}`);
+      await loggingSystem(REPORT_LOG_FILE, `Start processing serial ${serial} [${safeAddress}]`);
 
       const onuPath = await getOnuPathFromGrusher(serial);
 
       if (!onuPath) {
-        await loggingSystem("log/grusher-report.log", `Path not found for serial ${serial}`);
+        await loggingSystem(REPORT_LOG_FILE, `Path not found for serial ${serial} [${safeAddress}]`);
         reportLines.push(`${serial} [${safeAddress}] [path not found]`);
-        logRemainingTime();
+        await logRemainingTime();
       } else {
+        await loggingSystem(REPORT_LOG_FILE, `ONU path for ${serial}: ${onuPath}`);
+
         const macCount = await getOnuCliMacCount(onuPath);
 
         if (typeof macCount === "number") {
@@ -117,23 +127,32 @@ const onuMacCountReport = async () => {
           zeroStreak: nextZeroStreak,
         };
 
+        await loggingSystem(
+          REPORT_LOG_FILE,
+          `Result for ${serial}: address=[${safeAddress}], onuPath=[${onuPath}], macCount=[${macCount ?? "unknown"}], zeroStreak=[${nextZeroStreak}]`,
+        );
+
         if (nextZeroStreak >= ZERO_STREAK_ALERT_THRESHOLD) {
-          alertLines.push(`${serial} [${safeAddress}] [0] [${nextZeroStreak} weeks]`);
+          const alertLine = `${serial} [${safeAddress}] [0] [${nextZeroStreak} weeks]`;
+          alertLines.push(alertLine);
+          await loggingSystem(REPORT_LOG_FILE, `Alert triggered for ${alertLine}`);
         }
 
         reportLines.push(`${serial} [${safeAddress}] [${macCount ?? "unknown"}]`);
-        logRemainingTime();
+        await logRemainingTime();
       }
     } catch (error) {
       await loggingSystem(
         "log/error.log",
         `Failed to build MAC report for ${serial}: ${error.message}`,
       );
+      await loggingSystem(REPORT_LOG_FILE, `Error for ${serial} [${safeAddress}]: ${error.message}`);
       reportLines.push(`${serial} [${safeAddress}] [error]`);
-      logRemainingTime();
+      await logRemainingTime();
     }
 
     if (index < onuList.length - 1) {
+      await loggingSystem(REPORT_LOG_FILE, `Delay before next iteration: ${ITERATION_DELAY_MS} ms`);
       await delay(ITERATION_DELAY_MS);
     }
   }
@@ -142,6 +161,11 @@ const onuMacCountReport = async () => {
 
   const durationMs = Date.now() - startedAt;
   const durationSeconds = (durationMs / 1000).toFixed(2);
+
+  await loggingSystem(
+    REPORT_LOG_FILE,
+    `Weekly MAC report finished. Total MAC: ${totalMacCount}. Duration: ${durationSeconds}s. Alerts: ${alertLines.length}`,
+  );
 
   return {
     alertMessage:
@@ -168,22 +192,20 @@ export const sendWeeklyMacReport = async () => {
       "log/error.log",
       "TELEGRAM_REPORT_CHAT_ID is not set. Telegram report was not sent.",
     );
-    console.log("Telegram report:\n" + reportMessage);
-
-    if (alertMessage) {
-      console.log("Telegram alert:\n" + alertMessage);
-    }
-
+    await loggingSystem(REPORT_LOG_FILE, "TELEGRAM_REPORT_CHAT_ID is not set. Messages were printed to console.");
     return;
   }
 
   try {
     await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, reportMessage);
+    await loggingSystem(REPORT_LOG_FILE, "Telegram report message sent.");
 
     if (alertMessage) {
       await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, alertMessage);
+      await loggingSystem(REPORT_LOG_FILE, "Telegram alert message sent.");
     }
   } catch (error) {
     await loggingSystem("log/error.log", `Failed to send Telegram report: ${error.message}`);
+    await loggingSystem(REPORT_LOG_FILE, `Telegram send error: ${error.message}`);
   }
 };
