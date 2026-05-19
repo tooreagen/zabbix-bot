@@ -6,11 +6,17 @@ const NOTION_DATABASE_ID = "13bec93bba6f80a0a61eea6ac79e72fb";
 
 // Вспомогательная функция для извлечения текста из массива заголовков Notion
 const getPlainTextFromTitle = (title = []) =>
-  title.map((item) => item?.plain_text ?? "").join("").trim();
+  title
+    .map((item) => item?.plain_text ?? "")
+    .join("")
+    .trim();
 
 // Вспомогательная функция для извлечения текста из массива rich_text Notion
 const getPlainTextFromRichText = (richText = []) =>
-  richText.map((item) => item?.plain_text ?? "").join("").trim();
+  richText
+    .map((item) => item?.plain_text ?? "")
+    .join("")
+    .trim();
 
 export const getOnuSerialsFromNotion = async () => {
   const url = `https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query`;
@@ -27,7 +33,7 @@ export const getOnuSerialsFromNotion = async () => {
           "Notion-Version": "2022-06-28",
           "Content-Type": "application/json",
         },
-      }
+      },
     );
 
     const results = Array.isArray(response.data?.results) ? response.data.results : [];
@@ -43,7 +49,7 @@ export const getOnuSerialsFromNotion = async () => {
         }
 
         return {
-          serial,
+          hexSerial: serial,
           address: address || null,
         };
       })

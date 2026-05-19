@@ -1,20 +1,19 @@
-import { getOnuCliMacCount } from "../api/getOnuCliMacCount.js";
-import { getOnuPathFromGrusher } from "../api/getOnuPathFromGrusher.js";
-import { getOnuSerialsFromNotion } from "../api/getOnuSerialsFromNotion.js";
+import { getOnuActiveMacCount } from "../api/getOnuActiveMacCount.js";
 import { loggingSystem } from "../helpers/loggingSystem.js";
 import { bot } from "../bot.js";
-import { loadOnuZeroState, saveOnuZeroState } from "./onuZeroState.js";
+import { convertOnuHexSNToReadable } from "../helpers/convertOnuHexSNToReadable.js";
+import { getOnuSerialsFromNotion } from "../api/getOnuSerialsFromNotion.js";
 
 const { TELEGRAM_REPORT_CHAT_ID } = process.env;
 
-const ZERO_STREAK_ALERT_THRESHOLD = 4;
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4000;
 const ITERATION_DELAY_MS = 500;
 const REPORT_LOG_FILE = "log/grusher-report.log";
-const PROGRESS_LOG_FILE = "log/progress.log";
 
+// Вспомогательная функция для создания задержки между итерациями цикла
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Функция для разбивки длинного сообщения на части, не превышающие лимит Telegram
 const splitMessageIntoChunks = (message) => {
   if (message.length <= TELEGRAM_MAX_MESSAGE_LENGTH) {
     return [message];
@@ -58,151 +57,114 @@ const splitMessageIntoChunks = (message) => {
   return chunks;
 };
 
+// Функция для отправки сообщения в Telegram с автоматической разбивкой на части
 const sendChunkedTelegramMessage = async (chatId, message) => {
   const chunks = splitMessageIntoChunks(message);
 
   for (const chunk of chunks) {
-    await bot.api.sendMessage(chatId, chunk);
+    await bot.api.sendMessage(chatId, chunk, { parse_mode: "HTML" });
   }
 };
 
+// Вспомогательная функция для генерации отчета по количеству MAC на ОНУ и выявления ONT с 0 MAC подряд
 const onuMacCountReport = async () => {
-  const startedAt = Date.now();
-  const runStartedAtIso = new Date().toISOString();
   const onuList = await getOnuSerialsFromNotion();
-  const zeroState = await loadOnuZeroState();
-  const reportLines = [];
-  const alertLines = [];
+  const reportLines = []; //Общий отчет по количеству MAC на ОНУ
+  const alertLines = []; //Предупреждения по ONT с 0 MAC
+  const potentialAlerts = []; //ONT с 1 MAC, которые потенциально можно переключить
   let totalMacCount = 0;
-  let processedCount = 0;
 
-  await loggingSystem(
-    REPORT_LOG_FILE,
-    `Weekly MAC report started. ONT count: ${onuList.length}. Started at: ${runStartedAtIso}`,
-  );
-
-  const logRemainingTime = async () => {
-    processedCount += 1;
-
-    const elapsedMs = Date.now() - startedAt;
-    const averageIterationMs = elapsedMs / processedCount;
-    const remainingIterations = onuList.length - processedCount;
-    const estimatedRemainingMs = averageIterationMs * remainingIterations;
-    const estimatedRemainingMinutes = (estimatedRemainingMs / 60000).toFixed(2);
-    const progressMessage = `Processed ${processedCount}/${onuList.length}. Estimated time remaining: ${estimatedRemainingMinutes} min`;
-
-    await loggingSystem(PROGRESS_LOG_FILE, progressMessage);
-    await loggingSystem(REPORT_LOG_FILE, progressMessage);
-  };
-
-  for (const [index, { serial, address }] of onuList.entries()) {
+  // Основной цикл по каждому ONT для получения количества MAC
+  for (const [index, { hexSerial, address }] of onuList.entries()) {
     const safeAddress = address ?? "Без адреси";
 
     try {
-      await loggingSystem(REPORT_LOG_FILE, `Start processing serial ${serial} [${safeAddress}]`);
+      // преобразуем серийник вида hexSN, в читаемый серийник
+      const serial = convertOnuHexSNToReadable(hexSerial);
+      const macCount = await getOnuActiveMacCount(serial);
 
-      const onuPath = await getOnuPathFromGrusher(serial);
+      if (typeof macCount === "number") {
+        totalMacCount += macCount;
+      }
 
-      if (!onuPath) {
-        await loggingSystem(REPORT_LOG_FILE, `Path not found for serial ${serial} [${safeAddress}]`);
-        reportLines.push(`${serial} [${safeAddress}] [path not found]`);
-        await logRemainingTime();
-      } else {
-        await loggingSystem(REPORT_LOG_FILE, `ONU path for ${serial}: ${onuPath}`);
+      reportLines.push(`🆔${hexSerial} 📍[${safeAddress}] MAC=${macCount ?? "unknown"}`);
 
-        const macCount = await getOnuCliMacCount(onuPath);
+      // Если MAC=0, добавляем в предупреждения
+      if (macCount === 0) {
+        alertLines.push(`🆔${hexSerial} 📍[${safeAddress}] - 0 MAC за місяць`);
+      }
 
-        if (typeof macCount === "number") {
-          totalMacCount += macCount;
-        }
+      //Если macCount неизвестно, добавляем в предупреждения
+      if (!macCount) {
+        alertLines.push(`🆔${hexSerial} 📍[${safeAddress}] - Загальна помилка`);
+      }
 
-        const previousState = zeroState[serial] ?? {};
-        const nextZeroStreak = macCount === 0 ? (previousState.zeroStreak ?? 0) + 1 : 0;
-        const nowIso = new Date().toISOString();
+      // Если MAC=1, добавляем в потенциальные предупреждения
+      if (macCount === 1) {
+        potentialAlerts.push(`🆔${hexSerial} 📍[${safeAddress}] - 1 MAC за місяць`);
+      }
 
-        zeroState[serial] = {
-          address: safeAddress,
-          lastCheckedAt: nowIso,
-          lastMacCount: macCount,
-          zeroStreak: nextZeroStreak,
-        };
-
-        await loggingSystem(
-          REPORT_LOG_FILE,
-          `Result for ${serial}: address=[${safeAddress}], onuPath=[${onuPath}], macCount=[${macCount ?? "unknown"}], zeroStreak=[${nextZeroStreak}]`,
-        );
-
-        if (nextZeroStreak >= ZERO_STREAK_ALERT_THRESHOLD) {
-          const alertLine = `${serial} [${safeAddress}] [0] [${nextZeroStreak} weeks]`;
-          alertLines.push(alertLine);
-          await loggingSystem(REPORT_LOG_FILE, `Alert triggered for ${alertLine}`);
-        }
-
-        reportLines.push(`${serial} [${safeAddress}] [${macCount ?? "unknown"}]`);
-        await logRemainingTime();
+      // Добавляем задержку между запросами, чтобы не перегружать API
+      if (index < onuList.length - 1) {
+        await delay(ITERATION_DELAY_MS);
       }
     } catch (error) {
       await loggingSystem(
         "log/error.log",
-        `Failed to build MAC report for ${serial}: ${error.message}`,
+        `Failed to build MAC report for ${hexSerial}: ${error.message}`,
       );
-      await loggingSystem(REPORT_LOG_FILE, `Error for ${serial} [${safeAddress}]: ${error.message}`);
-      reportLines.push(`${serial} [${safeAddress}] [error]`);
-      await logRemainingTime();
-    }
-
-    if (index < onuList.length - 1) {
-      await loggingSystem(REPORT_LOG_FILE, `Delay before next iteration: ${ITERATION_DELAY_MS} ms`);
-      await delay(ITERATION_DELAY_MS);
+      reportLines.push(`🆔${hexSerial} 📍[${safeAddress}] [error]`);
     }
   }
 
-  await saveOnuZeroState(zeroState);
-
-  const durationMs = Date.now() - startedAt;
-  const durationSeconds = (durationMs / 1000).toFixed(2);
-
-  await loggingSystem(
-    REPORT_LOG_FILE,
-    `Weekly MAC report finished. Total MAC: ${totalMacCount}. Duration: ${durationSeconds}s. Alerts: ${alertLines.length}`,
-  );
-
   return {
     alertMessage:
-      alertLines.length > 0
-        ? ["ПОПЕРЕДЖЕННЯ: ONT має 0 MAC за 4 або більше перевірок поспіль", ...alertLines].join(
-            "\n",
-          )
-        : null,
+      alertLines.length > 0 ? ["🔴0 MAC за місяць / помилка", ...alertLines].join("\n") : null,
     reportMessage: [
       "Кількість MAC на будинкових ONU:",
       ...reportLines,
       "",
       `Всього MAC: ${totalMacCount}`,
-      `Час виконання: ${durationSeconds}s`,
     ].join("\n"),
+    potentialAlertMessage:
+      potentialAlerts.length > 0
+        ? ["<b>🚐 Можна переключати</b>\n", ...potentialAlerts].join("\n")
+        : null,
   };
 };
 
+// Главная функция для отправки еженедельного отчета по количеству MAC на ОНУ
 export const sendWeeklyMacReport = async () => {
-  const { reportMessage, alertMessage } = await onuMacCountReport();
+  // Получаем отчет и предупреждения по ONT с 0 MAC подряд
+  const { reportMessage, alertMessage, potentialAlertMessage } = await onuMacCountReport();
 
   if (!TELEGRAM_REPORT_CHAT_ID) {
     await loggingSystem(
       "log/error.log",
       "TELEGRAM_REPORT_CHAT_ID is not set. Telegram report was not sent.",
     );
-    await loggingSystem(REPORT_LOG_FILE, "TELEGRAM_REPORT_CHAT_ID is not set. Messages were printed to console.");
+    await loggingSystem(
+      REPORT_LOG_FILE,
+      "TELEGRAM_REPORT_CHAT_ID is not set. Messages were printed to console.",
+    );
     return;
   }
 
   try {
+    // Первая часть отчета - общий отчет по количеству MAC на ОНУ
     await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, reportMessage);
     await loggingSystem(REPORT_LOG_FILE, "Telegram report message sent.");
 
+    // Вторая часть отчета - предупреждения по ONT с 0 MAC подряд
     if (alertMessage) {
       await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, alertMessage);
       await loggingSystem(REPORT_LOG_FILE, "Telegram alert message sent.");
+    }
+
+    // Третья часть отчета - потенциальные предупреждения по ONT с 1 MAC
+    if (potentialAlertMessage) {
+      await sendChunkedTelegramMessage(TELEGRAM_REPORT_CHAT_ID, potentialAlertMessage);
+      await loggingSystem(REPORT_LOG_FILE, "Telegram potential alert message sent.");
     }
   } catch (error) {
     await loggingSystem("log/error.log", `Failed to send Telegram report: ${error.message}`);
