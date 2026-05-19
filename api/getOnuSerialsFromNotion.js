@@ -4,9 +4,11 @@ import { loggingSystem } from "../helpers/loggingSystem.js";
 const { NOTION_TOKEN } = process.env;
 const NOTION_DATABASE_ID = "13bec93bba6f80a0a61eea6ac79e72fb";
 
+// Вспомогательная функция для извлечения текста из массива заголовков Notion
 const getPlainTextFromTitle = (title = []) =>
   title.map((item) => item?.plain_text ?? "").join("").trim();
 
+// Вспомогательная функция для извлечения текста из массива rich_text Notion
 const getPlainTextFromRichText = (richText = []) =>
   richText.map((item) => item?.plain_text ?? "").join("").trim();
 
